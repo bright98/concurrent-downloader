@@ -14,23 +14,21 @@ func Download(cfg *domain.Config) error {
 	// 1. get file size from HEAD
 	size, rangeSupport, err := headRequest(cfg.URL)
 	if err != nil {
-		// TODO: handle with name of function
-		return err
+		return fmt.Errorf("head file err: [%w]", err)
 	}
 
 	// 2. if url doesn't support range, download without chunk (simple download)
 	if !rangeSupport || size == 0 {
-		// TODO: handle log with: not required to use chunks
+		fmt.Printf("file doesn't support any range. downloading the file without chunking.\n")
 		return downloadWithoutChunk(cfg.URL, cfg.OutputPath)
 	}
 
-	// TODO: handle log with size and chunk size
-
 	// 3. build chunks
 	chunks := buildChunk(size, cfg.ChunkSize)
+	fmt.Printf("file size: %d | chunk size: %d | splited file in %d chunks.\n", size, cfg.ChunkSize, len(chunks))
 
 	// 4. download each chunk concurrent
-	// TODO: add logs for start downloading
+	fmt.Printf("start downloading chunks...\n")
 	var wg sync.WaitGroup
 	errs := make(chan error, len(chunks))
 
@@ -50,22 +48,20 @@ func Download(cfg *domain.Config) error {
 	// 5. handle goroutine errors
 	for err := range errs {
 		if err != nil {
-			// TODO: handle error
 			cleanUpChunks(chunks)
-			return err
+			return fmt.Errorf("download chunk err: [%w]", err)
 		}
 	}
 
 	// 6. assemble output
-	// TODO: add log for start assembling
+	fmt.Printf("finished downloading chunks. start assembling...\n")
 	err = assembleDownloadedChunks(chunks, cfg.OutputPath)
 	if err != nil {
-		// TODO: handle error
-		return err
+		return fmt.Errorf("assembling file err: [%w]", err)
 	}
 
 	cleanUpChunks(chunks)
-	// TODO: log finished with output file path
+	fmt.Printf("finished. file saved to: %s\n", cfg.OutputPath)
 	return nil
 }
 
@@ -118,14 +114,12 @@ func assembleDownloadedChunks(chunks []*domain.Chunk, outputPath string) error {
 	for _, chunk := range chunks {
 		f, err := os.Open(chunk.TempFile)
 		if err != nil {
-			// TODO: handle error with chunk index
-			return err
+			return fmt.Errorf("open file err: [%w] in chunk %d", err, chunk.Index)
 		}
 		_, err = io.Copy(out, f)
 		if err != nil {
 			_ = f.Close()
-			// TODO: handle error with chunk index
-			return err
+			return fmt.Errorf("copy file err: [%w] in chunk %d", err, chunk.Index)
 		}
 		_ = f.Close()
 	}
@@ -152,14 +146,12 @@ func downloadWithoutChunk(url string, outputPath string) error {
 func downloadEachChunk(chunk *domain.Chunk, url string) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		// TODO: handle error with chunk index
-		return err
+		return fmt.Errorf("make request err: [%w] in chunk %d", err, chunk.Index)
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		// TODO: handle error with chunk index
-		return err
+		return fmt.Errorf("request err: [%w] in chunk %d", err, chunk.Index)
 	}
 	defer resp.Body.Close()
 
@@ -177,8 +169,7 @@ func downloadEachChunk(chunk *domain.Chunk, url string) error {
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
 		if readErr != nil {
-			// TODO: handle read error with chunk index
-			return err
+			return fmt.Errorf("read response err: [%w] in chunk %d", err, chunk.Index)
 		}
 		if readErr == io.EOF {
 			break
@@ -186,8 +177,7 @@ func downloadEachChunk(chunk *domain.Chunk, url string) error {
 		if bytesRead > 0 {
 			_, writeErr := out.Write(buf[:bytesRead])
 			if writeErr != nil {
-				// TODO: handle write error with chunk index
-				return writeErr
+				return fmt.Errorf("write response in tmp err: [%w] in chunk %d", err, chunk.Index)
 			}
 		}
 	}
