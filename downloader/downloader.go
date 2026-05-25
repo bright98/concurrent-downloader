@@ -84,14 +84,19 @@ func Download(cfg *domain.Config) error {
 }
 
 func headRequest(url string) (int64, bool, error) {
-	resp, err := http.Head(url)
+	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return 0, false, err
 	}
-	defer resp.Body.Close()
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
-	if resp.StatusCode != http.StatusOK {
-		return 0, false, fmt.Errorf("head request unexpected status %s", resp.Status)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, false, err
+	}
+	if resp.StatusCode != 200 {
+		return 0, false, fmt.Errorf("http status code %d", resp.StatusCode)
 	}
 
 	size := resp.ContentLength
@@ -172,6 +177,7 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar
 	}
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36") // ← add this
 
 	resp, err := client.Do(req)
 	if err != nil {
