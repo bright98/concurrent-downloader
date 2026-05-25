@@ -7,14 +7,66 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
-func download() {
+func Download(cfg *domain.Config) error {
 	// 1. get file size from HEAD
+	size, rangeSupport, err := headRequest(cfg.URL)
+	if err != nil {
+		// TODO: handle with name of function
+		return err
+	}
+
 	// 2. if url doesn't support range, download without chunk (simple download)
+	if !rangeSupport || size == 0 {
+		// TODO: handle log with: not required to use chunks
+		return downloadWithoutChunk(cfg.URL, cfg.OutputPath)
+	}
+
+	// TODO: handle log with size and chunk size
+
 	// 3. build chunks
+	chunks := buildChunk(size, cfg.ChunkSize)
+
 	// 4. download each chunk concurrent
-	// 5. assemble output
+	// TODO: add logs for start downloading
+	var wg sync.WaitGroup
+	errs := make(chan error, len(chunks))
+
+	for _, chunk := range chunks {
+		wg.Add(1)
+		go func(c *domain.Chunk) {
+			defer wg.Done()
+			if err = downloadEachChunk(c, cfg.URL); err != nil {
+				errs <- err
+			}
+		}(chunk)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	// 5. handle goroutine errors
+	for err := range errs {
+		if err != nil {
+			// TODO: handle error
+			cleanUpChunks(chunks)
+			return err
+		}
+	}
+
+	// 6. assemble output
+	// TODO: add log for start assembling
+	err = assembleDownloadedChunks(chunks, cfg.OutputPath)
+	if err != nil {
+		// TODO: handle error
+		return err
+	}
+
+	cleanUpChunks(chunks)
+	// TODO: log finished with output file path
+	return nil
 }
 
 func headRequest(url string) (int64, bool, error) {
@@ -140,4 +192,10 @@ func downloadEachChunk(chunk *domain.Chunk, url string) error {
 		}
 	}
 	return nil
+}
+
+func cleanUpChunks(chunks []*domain.Chunk) {
+	for _, chunk := range chunks {
+		_ = os.Remove(chunk.TempFile)
+	}
 }
