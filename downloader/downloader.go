@@ -32,11 +32,12 @@ func Download(cfg *domain.Config) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(chunks))
 
+	client := &http.Client{}
 	for _, chunk := range chunks {
 		wg.Add(1)
 		go func(c *domain.Chunk) {
 			defer wg.Done()
-			if err = downloadEachChunk(c, cfg.URL); err != nil {
+			if err = downloadEachChunk(c, cfg.URL, client); err != nil {
 				errs <- err
 			}
 		}(chunk)
@@ -46,7 +47,7 @@ func Download(cfg *domain.Config) error {
 	close(errs)
 
 	// 5. handle goroutine errors
-	for err := range errs {
+	for err = range errs {
 		if err != nil {
 			cleanUpChunks(chunks)
 			return fmt.Errorf("download chunk err: [%w]", err)
@@ -71,6 +72,10 @@ func headRequest(url string) (int64, bool, error) {
 		return 0, false, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, false, fmt.Errorf("head request unexpected status %s", resp.Status)
+	}
 
 	size := resp.ContentLength
 	rangeSupported := false
@@ -143,13 +148,15 @@ func downloadWithoutChunk(url string, outputPath string) error {
 	return err
 }
 
-func downloadEachChunk(chunk *domain.Chunk, url string) error {
+func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("make request err: [%w] in chunk %d", err, chunk.Index)
 	}
+
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
-	resp, err := http.DefaultClient.Do(req)
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request err: [%w] in chunk %d", err, chunk.Index)
 	}
@@ -168,16 +175,16 @@ func downloadEachChunk(chunk *domain.Chunk, url string) error {
 	buf := make([]byte, 32*1024) // 32KB
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
-		if readErr != nil {
-			return fmt.Errorf("read response err: [%w] in chunk %d", err, chunk.Index)
-		}
 		if readErr == io.EOF {
 			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("read response err: [%w] in chunk %d", readErr, chunk.Index)
 		}
 		if bytesRead > 0 {
 			_, writeErr := out.Write(buf[:bytesRead])
 			if writeErr != nil {
-				return fmt.Errorf("write response in tmp err: [%w] in chunk %d", err, chunk.Index)
+				return fmt.Errorf("write response in tmp err: [%w] in chunk %d", writeErr, chunk.Index)
 			}
 		}
 	}
