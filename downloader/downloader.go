@@ -45,7 +45,7 @@ func Download(cfg *domain.Config) error {
 	client := &http.Client{}
 
 	for _, chunk := range chunks {
-		bar := createChunkBar(progress, chunk)
+		bar := createChunkBar(progress, chunk, len(chunks))
 
 		wg.Add(1)
 		go func(c *domain.Chunk, b *mpb.Bar) {
@@ -219,10 +219,12 @@ func cleanUpChunks(chunks []*domain.Chunk) {
 	}
 }
 
-func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk) *mpb.Bar {
+func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk, chunksLen int) *mpb.Bar {
+	indexWidth := len(fmt.Sprintf("%d", chunksLen))
+
 	bar := progress.AddBar(chunk.End-chunk.Start+1,
 		mpb.PrependDecorators(
-			decor.Name(fmt.Sprintf("chunk %-2d ", chunk.Index+1), decor.WC{W: 10}), // TODO: fix for more 2 digits
+			decor.Name(fmt.Sprintf("chunk %*d ", indexWidth, chunk.Index+1), decor.WC{W: 10}),
 			decor.CountersKibiByte("% .2f / % .2f"),
 		),
 		mpb.AppendDecorators(
