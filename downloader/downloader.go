@@ -13,7 +13,7 @@ func download() {
 	// 1. get file size from HEAD
 	// 2. if url doesn't support range, download without chunk (simple download)
 	// 3. build chunks
-	// 4. download each file concurrent
+	// 4. download each chunk concurrent
 	// 5. assemble output
 }
 
@@ -95,4 +95,49 @@ func downloadWithoutChunk(url string, outputPath string) error {
 
 	_, err = io.Copy(out, resp.Body)
 	return err
+}
+
+func downloadEachChunk(chunk *domain.Chunk, url string) error {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		// TODO: handle error with chunk index
+		return err
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		// TODO: handle error with chunk index
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: [%s] on getting chunk %d", resp.Status, chunk.Index)
+	}
+
+	out, err := os.Create(chunk.TempFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	buf := make([]byte, 32*1024) // 32KB
+	for {
+		bytesRead, readErr := resp.Body.Read(buf)
+		if readErr != nil {
+			// TODO: handle read error with chunk index
+			return err
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if bytesRead > 0 {
+			_, writeErr := out.Write(buf[:bytesRead])
+			if writeErr != nil {
+				// TODO: handle write error with chunk index
+				return writeErr
+			}
+		}
+	}
+	return nil
 }

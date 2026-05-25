@@ -5,5 +5,4 @@ type Chunk struct {
 	Start    int64
 	End      int64
 	TempFile string
-	// TODO: add other things
 }
