@@ -59,5 +59,11 @@ func handleOutput(inputUrl, output string) (string, error) {
 		output = "output"
 	}
 
-	return filepath.Join(".", name), nil
+	out := filepath.Join(".", name)
+	_, err = os.Stat(out)
+	if err == nil {
+		return "", fmt.Errorf("file %s already exists", out)
+	}
+
+	return out, nil
 }
