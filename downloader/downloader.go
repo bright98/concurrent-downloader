@@ -28,7 +28,7 @@ func Download(cfg *domain.Config) error {
 
 	// 3. build chunks
 	chunks := buildChunk(size, cfg.ChunkSize)
-	fmt.Printf("file size: %d | chunk size: %d | splited file in %d chunks.\n", size, cfg.ChunkSize, len(chunks))
+	fmt.Printf("file size: %s | chunk size: %s | splited file in %d chunks.\n", formatBytes(size), formatBytes(cfg.ChunkSize), len(chunks))
 
 	// 4. download each chunk concurrent
 	fmt.Printf("start downloading chunks...\n")
@@ -218,9 +218,17 @@ func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk) *mpb.Bar {
 			decor.CountersKibiByte("% .2f / % .2f"),
 		),
 		mpb.AppendDecorators(
-			decor.EwmaSpeed(decor.SizeB1024(0), "% .2f", 60),
+			decor.EwmaSpeed(decor.SizeB1024(0), "% .2f | ", 60),
 			decor.OnComplete(decor.EwmaETA(decor.ET_STYLE_GO, 60), "done!"),
 		),
 	)
 	return bar
+}
+
+func formatBytes(b int64) string {
+	const mb = 1024 * 1024
+	if b >= mb {
+		return fmt.Sprintf("%.1fMB", float64(b)/mb)
+	}
+	return fmt.Sprintf("%.1fKB", float64(b)/1024)
 }
