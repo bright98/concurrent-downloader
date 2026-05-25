@@ -3,11 +3,14 @@ package downloader
 import (
 	"fmt"
 	"github.com/bright98/concurrent-downloader/domain"
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 func Download(cfg *domain.Config) error {
@@ -32,15 +35,21 @@ func Download(cfg *domain.Config) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(chunks))
 
+	// .5 initial progressbar and http client
+	progress := mpb.New(mpb.WithWidth(60))
 	client := &http.Client{}
+
 	for _, chunk := range chunks {
+		bar := createChunkBar(progress, chunk)
+
 		wg.Add(1)
-		go func(c *domain.Chunk) {
+		go func(c *domain.Chunk, b *mpb.Bar) {
 			defer wg.Done()
-			if err = downloadEachChunk(c, cfg.URL, client); err != nil {
+			if err = downloadEachChunk(c, cfg.URL, client, b); err != nil {
+				b.Abort(true)
 				errs <- err
 			}
-		}(chunk)
+		}(chunk, bar)
 	}
 
 	wg.Wait()
@@ -148,7 +157,7 @@ func downloadWithoutChunk(url string, outputPath string) error {
 	return err
 }
 
-func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client) error {
+func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar *mpb.Bar) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("make request err: [%w] in chunk %d", err, chunk.Index)
@@ -172,7 +181,9 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client) err
 	}
 	defer out.Close()
 
-	buf := make([]byte, 32*1024) // 32KB
+	buf := make([]byte, 32*1024)  // 32KB
+	progressStarted := time.Now() // for progress bar speed
+
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
 		if readErr == io.EOF {
@@ -187,6 +198,9 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client) err
 				return fmt.Errorf("write response in tmp err: [%w] in chunk %d", writeErr, chunk.Index)
 			}
 		}
+		// progress bar
+		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
+		progressStarted = time.Now()
 	}
 	return nil
 }
@@ -195,4 +209,18 @@ func cleanUpChunks(chunks []*domain.Chunk) {
 	for _, chunk := range chunks {
 		_ = os.Remove(chunk.TempFile)
 	}
+}
+
+func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk) *mpb.Bar {
+	bar := progress.AddBar(chunk.End-chunk.Start+1,
+		mpb.PrependDecorators(
+			decor.Name(fmt.Sprintf("chunk %-2d", chunk.Index), decor.WC{W: 10}),
+			decor.CountersKibiByte("% .2f / % .2f"),
+		),
+		mpb.AppendDecorators(
+			decor.EwmaSpeed(decor.SizeB1024(0), "% .2f", 60),
+			decor.OnComplete(decor.EwmaETA(decor.ET_STYLE_GO, 60), "done!"),
+		),
+	)
+	return bar
 }
