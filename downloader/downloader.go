@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	maxRetry      = 3
+	retryBaseWait = 1 * time.Second
+)
+
 func Download(cfg *domain.Config) error {
 	// 1. get file size from HEAD
 	size, rangeSupport, err := headRequest(cfg.URL)
@@ -45,7 +50,10 @@ func Download(cfg *domain.Config) error {
 		wg.Add(1)
 		go func(c *domain.Chunk, b *mpb.Bar) {
 			defer wg.Done()
-			if err = downloadEachChunk(c, cfg.URL, client, b); err != nil {
+			err = withRetry(c.Index, bar, func() error {
+				return downloadEachChunk(c, cfg.URL, client, b)
+			})
+			if err != nil {
 				b.Abort(true)
 				errs <- err
 			}
@@ -214,7 +222,7 @@ func cleanUpChunks(chunks []*domain.Chunk) {
 func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk) *mpb.Bar {
 	bar := progress.AddBar(chunk.End-chunk.Start+1,
 		mpb.PrependDecorators(
-			decor.Name(fmt.Sprintf("chunk %-2d", chunk.Index), decor.WC{W: 10}),
+			decor.Name(fmt.Sprintf("chunk %-2d ", chunk.Index+1), decor.WC{W: 10}), // TODO: fix for more 2 digits
 			decor.CountersKibiByte("% .2f / % .2f"),
 		),
 		mpb.AppendDecorators(
@@ -231,4 +239,19 @@ func formatBytes(b int64) string {
 		return fmt.Sprintf("%.1fMB", float64(b)/mb)
 	}
 	return fmt.Sprintf("%.1fKB", float64(b)/1024)
+}
+
+func withRetry(chinkIndex int, bar *mpb.Bar, fn func() error) error {
+	for attempt := 0; attempt < maxRetry; attempt++ {
+		err := fn()
+		if err != nil {
+			fmt.Printf("chunck %d failed (attempt %d/%d): %v. Retrying in %v...\n",
+				chinkIndex, attempt+1, maxRetry, err, retryBaseWait)
+			bar.SetCurrent(0)
+			time.Sleep(retryBaseWait)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("failed after %d retries", maxRetry)
 }
