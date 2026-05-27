@@ -95,6 +95,8 @@ func headRequest(url string) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		return 0, false, fmt.Errorf("http status code %d", resp.StatusCode)
 	}
