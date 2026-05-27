@@ -55,7 +55,7 @@ func handleOutput(inputUrl, output string) (string, error) {
 
 	name := filepath.Base(parsed.Path)
 	if name == "" {
-		output = "output"
+		name = "output"
 	}
 
 	out := filepath.Join(".", name)
