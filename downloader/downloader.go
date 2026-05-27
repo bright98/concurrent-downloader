@@ -82,6 +82,13 @@ func Download(cfg *domain.Config) error {
 
 	cleanUpChunks(chunks)
 	fmt.Printf("finished. file saved to: %s\n", cfg.OutputPath)
+
+	// validate file size
+	err = fileSizeValidation(cfg.OutputPath, size)
+	if err != nil {
+		return fmt.Errorf("file size validation err: [%w]", err)
+	}
+
 	return nil
 }
 
@@ -180,14 +187,9 @@ func downloadWithoutChunk(url string, outputPath string, size int64, client *htt
 	}
 	defer out.Close()
 
-	writtenSize, err := readResponseByteToByte(resp, out, bar)
+	err = readResponseByteToByte(resp, out, bar)
 	if err != nil {
 		return fmt.Errorf("copy response to file err: [%w]", err)
-	}
-
-	// validate size
-	if size > 0 && writtenSize != size {
-		return fmt.Errorf("incomplete download: [got %d bytes, expected %d]", writtenSize, size)
 	}
 
 	return err
@@ -218,15 +220,11 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar
 	}
 	defer out.Close()
 
-	writtenSize, err := readResponseByteToByte(resp, out, bar)
+	err = readResponseByteToByte(resp, out, bar)
 	if err != nil {
 		return fmt.Errorf("copy response to file err: [%w] in chunk %d", err, chunk.Index)
 	}
 
-	// validate size
-	if writtenSize != chunk.End-chunk.Start+1 {
-		return fmt.Errorf("chunk %d incomplete: [got %d bytes, expected %d]", chunk.Index, writtenSize, chunk.End-chunk.Start+1)
-	}
 	return nil
 }
 
@@ -292,29 +290,39 @@ func withRetry(chinkIndex int, bar *mpb.Bar, fn func() error) error {
 	return fmt.Errorf("failed after %d retries", maxRetry)
 }
 
-func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) (int64, error) {
+func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) error {
 	buf := make([]byte, 32*1024)  // 32KB
 	progressStarted := time.Now() // for progress bar speed
-	var totalWritten int64        // for size validation in the end
 
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
 		if bytesRead > 0 {
 			_, writeErr := out.Write(buf[:bytesRead])
 			if writeErr != nil {
-				return totalWritten, fmt.Errorf("write response in tmp err: [%w]", writeErr)
+				return fmt.Errorf("write response in tmp err: [%w]", writeErr)
 			}
-			totalWritten += int64(bytesRead)
 		}
-		if readErr == io.EOF {
+		if readErr == io.EOF || bytesRead == 0 {
 			break
 		}
 		if readErr != nil {
-			return totalWritten, fmt.Errorf("read response err: [%w]", readErr)
+			return fmt.Errorf("read response err: [%w]", readErr)
 		}
 		// progress bar
 		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
 		progressStarted = time.Now()
 	}
-	return totalWritten, nil
+	return nil
+}
+
+func fileSizeValidation(outputPath string, sizeFromUrl int64) error {
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return fmt.Errorf("stat output file err: [%w]", err)
+	}
+	if info.Size() != sizeFromUrl {
+		_ = os.Remove(outputPath)
+		return fmt.Errorf("incomplete download: file is %d bytes, expected %d", info.Size(), sizeFromUrl)
+	}
+	return nil
 }
