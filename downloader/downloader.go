@@ -19,8 +19,11 @@ const (
 )
 
 func Download(cfg *domain.Config) error {
+	// 0. initial
+	client := &http.Client{}
+
 	// 1. get file size from HEAD
-	size, rangeSupport, err := headRequest(cfg.URL)
+	size, rangeSupport, err := headRequest(cfg.URL, client)
 	if err != nil {
 		return fmt.Errorf("head file err: [%w]", err)
 	}
@@ -28,7 +31,7 @@ func Download(cfg *domain.Config) error {
 	// 2. if url doesn't support range, download without chunk (simple download)
 	if !rangeSupport || size == 0 {
 		fmt.Printf("file doesn't support any range. downloading the file without chunking.\n")
-		return downloadWithoutChunk(cfg.URL, cfg.OutputPath)
+		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, client)
 	}
 
 	// 3. build chunks
@@ -40,9 +43,8 @@ func Download(cfg *domain.Config) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(chunks))
 
-	// .5 initial progressbar and http client
+	// .5 initial progressbar
 	progress := mpb.New(mpb.WithWidth(60))
-	client := &http.Client{}
 
 	for _, chunk := range chunks {
 		bar := createChunkBar(progress, chunk, len(chunks))
@@ -83,14 +85,13 @@ func Download(cfg *domain.Config) error {
 	return nil
 }
 
-func headRequest(url string) (int64, bool, error) {
+func headRequest(url string, client *http.Client) (int64, bool, error) {
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
 		return 0, false, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, false, err
@@ -155,12 +156,23 @@ func assembleDownloadedChunks(chunks []*domain.Chunk, outputPath string) error {
 	return nil
 }
 
-func downloadWithoutChunk(url string, outputPath string) error {
-	resp, err := http.Get(url)
+func downloadWithoutChunk(url string, outputPath string, client *http.Client) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("make request err: [%w]", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request err: [%w]", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status: [%s]", resp.Status)
+	}
 
 	out, err := os.Create(outputPath)
 	if err != nil {
@@ -173,13 +185,13 @@ func downloadWithoutChunk(url string, outputPath string) error {
 }
 
 func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar *mpb.Bar) error {
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("make request err: [%w] in chunk %d", err, chunk.Index)
 	}
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", chunk.Start, chunk.End))
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36") // ← add this
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 
 	resp, err := client.Do(req)
 	if err != nil {
