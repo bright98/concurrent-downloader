@@ -177,7 +177,7 @@ func downloadWithoutChunk(url string, outputPath string, size int64, client *htt
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("bad status: [%s]", resp.Status)
 	}
 
