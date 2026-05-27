@@ -287,17 +287,17 @@ func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) err
 
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return fmt.Errorf("read response err: [%w]", readErr)
-		}
 		if bytesRead > 0 {
 			_, writeErr := out.Write(buf[:bytesRead])
 			if writeErr != nil {
 				return fmt.Errorf("write response in tmp err: [%w]", writeErr)
 			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("read response err: [%w]", readErr)
 		}
 		// progress bar
 		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
