@@ -33,7 +33,7 @@ func Download(cfg *domain.Config) error {
 	if !rangeSupport || size == 0 {
 		fmt.Printf("file doesn't support any range. downloading the file without chunking.\n")
 		bar := createSimpleBar(progress, size)
-		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, client, bar)
+		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, size, client, bar)
 	}
 
 	// 3. build chunks
@@ -156,7 +156,7 @@ func assembleDownloadedChunks(chunks []*domain.Chunk, outputPath string) error {
 	return nil
 }
 
-func downloadWithoutChunk(url string, outputPath string, client *http.Client, bar *mpb.Bar) error {
+func downloadWithoutChunk(url string, outputPath string, size int64, client *http.Client, bar *mpb.Bar) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("make request err: [%w]", err)
@@ -180,10 +180,16 @@ func downloadWithoutChunk(url string, outputPath string, client *http.Client, ba
 	}
 	defer out.Close()
 
-	err = readResponseByteToByte(resp, out, bar)
+	writtenSize, err := readResponseByteToByte(resp, out, bar)
 	if err != nil {
 		return fmt.Errorf("copy response to file err: [%w]", err)
 	}
+
+	// validate size
+	if size > 0 && writtenSize != size {
+		return fmt.Errorf("incomplete download: [got %d bytes, expected %d]", writtenSize, size)
+	}
+
 	return err
 }
 
@@ -212,9 +218,14 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar
 	}
 	defer out.Close()
 
-	err = readResponseByteToByte(resp, out, bar)
+	writtenSize, err := readResponseByteToByte(resp, out, bar)
 	if err != nil {
 		return fmt.Errorf("copy response to file err: [%w] in chunk %d", err, chunk.Index)
+	}
+
+	// validate size
+	if writtenSize != chunk.End-chunk.Start+1 {
+		return fmt.Errorf("chunk %d incomplete: [got %d bytes, expected %d]", chunk.Index, writtenSize, chunk.End-chunk.Start+1)
 	}
 	return nil
 }
@@ -281,27 +292,29 @@ func withRetry(chinkIndex int, bar *mpb.Bar, fn func() error) error {
 	return fmt.Errorf("failed after %d retries", maxRetry)
 }
 
-func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) error {
+func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) (int64, error) {
 	buf := make([]byte, 32*1024)  // 32KB
 	progressStarted := time.Now() // for progress bar speed
+	var totalWritten int64        // for size validation in the end
 
 	for {
 		bytesRead, readErr := resp.Body.Read(buf)
 		if bytesRead > 0 {
 			_, writeErr := out.Write(buf[:bytesRead])
 			if writeErr != nil {
-				return fmt.Errorf("write response in tmp err: [%w]", writeErr)
+				return totalWritten, fmt.Errorf("write response in tmp err: [%w]", writeErr)
 			}
+			totalWritten += int64(bytesRead)
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return fmt.Errorf("read response err: [%w]", readErr)
+			return totalWritten, fmt.Errorf("read response err: [%w]", readErr)
 		}
 		// progress bar
 		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
 		progressStarted = time.Now()
 	}
-	return nil
+	return totalWritten, nil
 }
