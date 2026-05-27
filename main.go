@@ -23,7 +23,7 @@ func main() {
 
 	out, err := handleOutput(*inputUrl, *output)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("err: %v \n", err)
 		os.Exit(1)
 	}
 
@@ -35,7 +35,6 @@ func main() {
 
 	err = downloader.Download(cfg)
 	if err != nil {
-		fmt.Println(err)
 		fmt.Printf("err: %v \n", err)
 		os.Exit(1)
 	}
