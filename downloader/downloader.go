@@ -52,7 +52,7 @@ func Download(cfg *domain.Config) error {
 		wg.Add(1)
 		go func(c *domain.Chunk, b *mpb.Bar) {
 			defer wg.Done()
-			err = withRetry(c.Index, bar, func() error {
+			err := withRetry(c.Index, bar, func() error {
 				return downloadEachChunk(c, cfg.URL, client, b)
 			})
 			if err != nil {
