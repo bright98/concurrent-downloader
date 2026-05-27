@@ -270,7 +270,10 @@ func withRetry(chinkIndex int, bar *mpb.Bar, fn func() error) error {
 			fmt.Printf("chunck %d failed (attempt %d/%d): %v. Retrying in %v...\n",
 				chinkIndex, attempt+1, maxRetry, err, retryBaseWait)
 			bar.SetCurrent(0)
-			time.Sleep(retryBaseWait)
+
+			if attempt < maxRetry-1 {
+				time.Sleep(retryBaseWait)
+			}
 			continue
 		}
 		return nil
