@@ -30,7 +30,7 @@ func Download(cfg *domain.Config) error {
 	}
 
 	// 2. if url doesn't support range, download without chunk (simple download)
-	if !rangeSupport || size == 0 {
+	if !rangeSupport || size <= 0 {
 		fmt.Printf("file doesn't support any range. downloading the file without chunking.\n")
 		bar := createSimpleBar(progress, size)
 		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, size, client, bar)
@@ -105,7 +105,7 @@ func headRequest(url string, client *http.Client) (int64, bool, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return 0, false, fmt.Errorf("http status code %d", resp.StatusCode)
 	}
 
