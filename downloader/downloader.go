@@ -21,6 +21,7 @@ const (
 func Download(cfg *domain.Config) error {
 	// 0. initial
 	client := &http.Client{}
+	progress := mpb.New(mpb.WithWidth(60))
 
 	// 1. get file size from HEAD
 	size, rangeSupport, err := headRequest(cfg.URL, client)
@@ -31,7 +32,8 @@ func Download(cfg *domain.Config) error {
 	// 2. if url doesn't support range, download without chunk (simple download)
 	if !rangeSupport || size == 0 {
 		fmt.Printf("file doesn't support any range. downloading the file without chunking.\n")
-		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, client)
+		bar := createSimpleBar(progress, size)
+		return downloadWithoutChunk(cfg.URL, cfg.OutputPath, client, bar)
 	}
 
 	// 3. build chunks
@@ -43,9 +45,7 @@ func Download(cfg *domain.Config) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(chunks))
 
-	// .5 initial progressbar
-	progress := mpb.New(mpb.WithWidth(60))
-
+	// 5. download each chunk - concurrent
 	for _, chunk := range chunks {
 		bar := createChunkBar(progress, chunk, len(chunks))
 
@@ -65,7 +65,7 @@ func Download(cfg *domain.Config) error {
 	wg.Wait()
 	close(errs)
 
-	// 5. handle goroutine errors
+	// 6. handle goroutine errors
 	for err = range errs {
 		if err != nil {
 			cleanUpChunks(chunks)
@@ -73,7 +73,7 @@ func Download(cfg *domain.Config) error {
 		}
 	}
 
-	// 6. assemble output
+	// 7. assemble output
 	fmt.Printf("finished downloading chunks. start assembling...\n")
 	err = assembleDownloadedChunks(chunks, cfg.OutputPath)
 	if err != nil {
@@ -156,7 +156,7 @@ func assembleDownloadedChunks(chunks []*domain.Chunk, outputPath string) error {
 	return nil
 }
 
-func downloadWithoutChunk(url string, outputPath string, client *http.Client) error {
+func downloadWithoutChunk(url string, outputPath string, client *http.Client, bar *mpb.Bar) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("make request err: [%w]", err)
@@ -180,7 +180,10 @@ func downloadWithoutChunk(url string, outputPath string, client *http.Client) er
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	err = readResponseByteToByte(resp, out, bar)
+	if err != nil {
+		return fmt.Errorf("copy response to file err: [%w]", err)
+	}
 	return err
 }
 
@@ -209,26 +212,9 @@ func downloadEachChunk(chunk *domain.Chunk, url string, client *http.Client, bar
 	}
 	defer out.Close()
 
-	buf := make([]byte, 32*1024)  // 32KB
-	progressStarted := time.Now() // for progress bar speed
-
-	for {
-		bytesRead, readErr := resp.Body.Read(buf)
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return fmt.Errorf("read response err: [%w] in chunk %d", readErr, chunk.Index)
-		}
-		if bytesRead > 0 {
-			_, writeErr := out.Write(buf[:bytesRead])
-			if writeErr != nil {
-				return fmt.Errorf("write response in tmp err: [%w] in chunk %d", writeErr, chunk.Index)
-			}
-		}
-		// progress bar
-		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
-		progressStarted = time.Now()
+	err = readResponseByteToByte(resp, out, bar)
+	if err != nil {
+		return fmt.Errorf("copy response to file err: [%w] in chunk %d", err, chunk.Index)
 	}
 	return nil
 }
@@ -237,6 +223,20 @@ func cleanUpChunks(chunks []*domain.Chunk) {
 	for _, chunk := range chunks {
 		_ = os.Remove(chunk.TempFile)
 	}
+}
+
+func createSimpleBar(progress *mpb.Progress, size int64) *mpb.Bar {
+	bar := progress.AddBar(size,
+		mpb.PrependDecorators(
+			decor.Name("downloading ", decor.WC{W: 12}),
+			decor.CountersKibiByte("% .2f / % .2f"),
+		),
+		mpb.AppendDecorators(
+			decor.EwmaSpeed(decor.SizeB1024(0), "% .2f | ", 60),
+			decor.OnComplete(decor.EwmaETA(decor.ET_STYLE_GO, 60), "done!"),
+		),
+	)
+	return bar
 }
 
 func createChunkBar(progress *mpb.Progress, chunk *domain.Chunk, chunksLen int) *mpb.Bar {
@@ -276,4 +276,29 @@ func withRetry(chinkIndex int, bar *mpb.Bar, fn func() error) error {
 		return nil
 	}
 	return fmt.Errorf("failed after %d retries", maxRetry)
+}
+
+func readResponseByteToByte(resp *http.Response, out *os.File, bar *mpb.Bar) error {
+	buf := make([]byte, 32*1024)  // 32KB
+	progressStarted := time.Now() // for progress bar speed
+
+	for {
+		bytesRead, readErr := resp.Body.Read(buf)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("read response err: [%w]", readErr)
+		}
+		if bytesRead > 0 {
+			_, writeErr := out.Write(buf[:bytesRead])
+			if writeErr != nil {
+				return fmt.Errorf("write response in tmp err: [%w]", writeErr)
+			}
+		}
+		// progress bar
+		bar.EwmaIncrBy(bytesRead, time.Since(progressStarted))
+		progressStarted = time.Now()
+	}
+	return nil
 }
